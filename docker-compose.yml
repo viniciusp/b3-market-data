@@ -1,0 +1,128 @@
+services:
+  kafka:
+    image: apache/kafka:4.0.0
+    environment:
+      # Single-node KRaft: this broker is also the controller, no ZooKeeper.
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      # Clients live inside the compose network and reach the broker at kafka:19092.
+      KAFKA_LISTENERS: INTERNAL://:19092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:19092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      # Single broker, so internal topics cannot be replicated.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      # Topics are created explicitly by kafka-init; typos must fail, not create topics.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_HEAP_OPTS: -Xmx1g -Xms512m
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:19092 --list
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 15s
+    restart: unless-stopped
+
+  kafka-init:
+    image: apache/kafka:4.0.0
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: /bin/sh -c
+    command:
+      - |
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --create --if-not-exists \
+          --topic trades.raw --partitions 12 --replication-factor 1 \
+          --config retention.ms=604800000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --create --if-not-exists \
+          --topic trades.dlq --partitions 1 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --create --if-not-exists \
+          --topic trades.watermarks --partitions 1 --replication-factor 1 \
+          --config cleanup.policy=compact
+        echo "topics ready:"
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --list
+
+  risingwave:
+    image: risingwavelabs/risingwave:v2.8.5
+    command: single_node
+    volumes:
+      - risingwave-data:/root/.risingwave
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  risingwave-init:
+    image: postgres:17  # reused for its psql client
+    depends_on:
+      risingwave:
+        condition: service_started
+      kafka-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: app
+    volumes:
+      - ./risingwave/schema.sql:/schema.sql:ro
+    entrypoint: /bin/sh -c
+    command:
+      - |
+        until psql -h risingwave -p 4566 -d dev -U root -c 'SELECT 1' >/dev/null 2>&1; do
+          echo 'waiting for risingwave pgwire...'; sleep 3
+        done
+        # Sinks validate their target tables, which the poller creates at boot.
+        until psql -h postgres -U app -d b3 -c 'SELECT 1 FROM last_price LIMIT 0' >/dev/null 2>&1; do
+          echo 'waiting for serving tables in postgres...'; sleep 3
+        done
+        psql -h risingwave -p 4566 -d dev -U root -v ON_ERROR_STOP=1 -f /schema.sql
+        echo 'risingwave schema applied'
+
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: b3
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: pg_isready -U app -d b3
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build: .
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://app:app@postgres:5432/b3
+    restart: unless-stopped
+
+  poller:
+    build: .
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      DATABASE_URL: postgresql://app:app@postgres:5432/b3
+    restart: unless-stopped
+
+volumes:
+  kafka-data:
+  postgres-data:
+  risingwave-data:

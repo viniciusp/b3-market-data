@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Radar de Proventos B3</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page:        #f9f9f7;
+    --surface:     #fcfcfb;
+    --ink:         #0b0b0b;
+    --ink-2:       #52514e;
+    --muted:       #898781;
+    --grid:        #e1e0d9;
+    --border:      rgba(11, 11, 11, 0.10);
+    --bar:         #2a78d6;   /* sequential blue, light step */
+    --good:        #0ca30c;
+    --warning:     #fab219;
+    --critical:    #d03b3b;
+    --good-text:   #006300;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page:      #0d0d0d;
+      --surface:   #1a1a19;
+      --ink:       #ffffff;
+      --ink-2:     #c3c2b7;
+      --muted:     #898781;
+      --grid:      #2c2c2a;
+      --border:    rgba(255, 255, 255, 0.10);
+      --bar:       #3987e5;
+      --good-text: #0ca30c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--page); color: var(--ink);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 1200px; margin: 0 auto; padding: 32px 20px 48px; }
+  header { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  h1 { font-size: 22px; font-weight: 650; margin: 0; }
+  .sub { color: var(--ink-2); font-size: 13px; }
+  .spacer { flex: 1; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12.5px; color: var(--ink-2);
+    border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px;
+    background: var(--surface); white-space: nowrap;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.ok   { background: var(--good); }
+  .dot.warn { background: var(--warning); }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+           gap: 12px; margin: 24px 0; }
+  .tile { background: var(--surface); border: 1px solid var(--border);
+          border-radius: 12px; padding: 14px 16px; }
+  .tile .label { font-size: 12px; color: var(--muted); letter-spacing: 0.02em; }
+  .tile .value { font-size: 26px; font-weight: 650; margin-top: 2px; }
+  .tile .hint  { font-size: 12px; color: var(--ink-2); margin-top: 2px; }
+
+  .card { background: var(--surface); border: 1px solid var(--border);
+          border-radius: 12px; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; min-width: 960px; }
+  td { white-space: nowrap; }
+  th, td { text-align: left; padding: 9px 10px; }
+  th { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em;
+       color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--grid); }
+  td { border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: color-mix(in oklab, var(--bar) 6%, transparent); }
+  tr.group td { background: color-mix(in oklab, var(--bar) 4%, transparent);
+                border-top: 2px solid var(--grid); }
+  tr.sub .type, tr.sub .status { color: var(--muted); }
+  td.num, th.num { text-align: right; }
+  .ticker { font-weight: 650; }
+  .ticker a { color: inherit; text-decoration: none; }
+  .ticker a:hover { text-decoration: underline; }
+  .type { color: var(--ink-2); font-size: 13px; }
+  .status { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px;
+            white-space: nowrap; }
+  .tbd { color: var(--ink-2); font-size: 12.5px; border: 1px dashed var(--border);
+         border-radius: 6px; padding: 1px 6px; white-space: nowrap; }
+  .closed { color: var(--muted); font-size: 12.5px; border: 1px solid var(--border);
+            border-radius: 6px; padding: 1px 6px; white-space: nowrap; }
+  .yield-cell { display: flex; align-items: center; gap: 10px; justify-content: flex-end; }
+  .yield-bar { width: 80px; height: 6px; border-radius: 4px; background: var(--grid);
+               overflow: hidden; flex: none; }
+  .yield-bar > div { height: 100%; border-radius: 4px; background: var(--bar); }
+  .net { color: var(--good-text); }
+  footer { color: var(--muted); font-size: 12.5px; margin-top: 20px;
+           display: flex; gap: 16px; flex-wrap: wrap; }
+  footer a { color: var(--ink-2); }
+  .error { border: 1px solid var(--critical); color: var(--critical);
+           border-radius: 12px; padding: 12px 16px; margin: 24px 0; display: none; }
+
+  /* Ticker detail modal */
+  .backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45);
+              display: none; align-items: center; justify-content: center; padding: 20px; z-index: 10; }
+  .backdrop.open { display: flex; }
+  .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+           width: 100%; max-width: 560px; max-height: 90vh; overflow-y: auto; padding: 22px 24px; }
+  .modal h2 { margin: 0; font-size: 20px; font-weight: 650; }
+  .modal-head { display: flex; align-items: baseline; gap: 12px; }
+  .close { margin-left: auto; background: none; border: none; color: var(--muted);
+           font-size: 22px; cursor: pointer; line-height: 1; padding: 0; }
+  .hero { display: flex; align-items: baseline; gap: 12px; margin: 14px 0 4px; }
+  .hero .price { font-size: 34px; font-weight: 650; }
+  .delta { font-size: 14px; display: inline-flex; align-items: center; gap: 4px; }
+  .delta.up { color: var(--good-text); }
+  .delta.down { color: var(--critical); }
+  .section-label { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em;
+                   color: var(--muted); margin: 22px 0 8px; }
+  .rangewrap { font-variant-numeric: tabular-nums; }
+  .track { position: relative; height: 6px; border-radius: 4px; background: var(--grid);
+           margin: 16px 0 10px; }
+  /* The open->current segment carries the day move; color matches the header delta. */
+  .track-fill { position: absolute; top: 0; bottom: 0; border-radius: 4px; }
+  .track-fill.up { background: var(--good); }
+  .track-fill.down { background: var(--critical); }
+  .track-tick { position: absolute; top: 50%; width: 2px; height: 10px; border-radius: 1px;
+                transform: translate(-50%, -50%); background: var(--muted); }
+  .legend-tick { position: static; display: inline-block; transform: none;
+                 width: 2px; height: 10px; vertical-align: -1px; margin-right: 5px; }
+  .range-ends { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-2); }
+  .payout { display: flex; gap: 22px; margin: 0; font-variant-numeric: tabular-nums; }
+  .payout .n { font-size: 20px; font-weight: 650; }
+  .payout .k { font-size: 12px; color: var(--muted); }
+  .empty { color: var(--ink-2); font-size: 13.5px; padding: 6px 0; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Radar de Proventos B3</h1>
+    <span class="sub">proventos anunciados e ainda n&atilde;o pagos &middot; watchlist de 10 empresas</span>
+    <span class="spacer"></span>
+    <span class="chip">
+      <span class="dot" id="health-dot"></span><span id="health-text">verificando&hellip;</span>
+    </span>
+  </header>
+
+  <div class="error" id="error">API indispon&iacute;vel no momento.</div>
+
+  <div class="backdrop" id="backdrop">
+    <div class="modal" id="modal" role="dialog" aria-modal="true"></div>
+  </div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>Ticker</th><th>Tipo</th><th>Status</th>
+          <th class="num">Bruto/a&ccedil;&atilde;o</th><th class="num">L&iacute;quido/a&ccedil;&atilde;o</th>
+          <th>Comprar at&eacute;</th><th>Pagamento</th>
+          <th class="num">Yield no pre&ccedil;o atual</th><th class="num">&Uacute;ltimo pre&ccedil;o</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <footer>
+    <span>dados da B3 com ~15 min de atraso</span>
+    <span>JCP: valor publicado &eacute; bruto; l&iacute;quido desconta 15% de IRRF</span>
+    <span id="updated"></span>
+    <span class="spacer"></span>
+    <a href="/docs">/docs</a>
+  </footer>
+</main>
+
+<script>
+  const brl = (v, dp = 4) => Number(v).toLocaleString("pt-BR",
+    { style: "currency", currency: "BRL",
+      minimumFractionDigits: Math.min(2, dp), maximumFractionDigits: dp });
+  const pct = (v) => (v * 100).toLocaleString("pt-BR",
+    { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "%";
+  // ISO dates are calendar dates; never feed them to Date() (UTC parsing shifts the day).
+  const dateBR = (iso) => iso.split("-").reverse().join("/");
+  const ago = (s) => s < 120 ? `${s}s` : s < 7200 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} h`;
+
+  const STATUS = {
+    with_rights:     { dot: "ok",   label: "janela aberta: compre até a data" },
+    pending_payment: { dot: "warn", label: "aguardando pagamento" },
+  };
+  const TYPE_SHORT = { "JRS CAP PROPRIO": "JCP", "DIVIDENDO": "Dividendo", "RENDIMENTO": "Rendimento" };
+
+  function tile(label, value, hint) {
+    return `<div class="tile"><div class="label">${label}</div>` +
+           `<div class="value">${value}</div><div class="hint">${hint ?? ""}</div></div>`;
+  }
+
+  function eventRow(i) {
+    const st = STATUS[i.status] ?? { dot: "", label: i.status };
+    const payment = i.payment_tbd ? '<span class="tbd">a definir</span>' : dateBR(i.payment_date);
+    return `<tr class="sub">
+      <td></td>
+      <td class="type" title="${i.type}">${TYPE_SHORT[i.type] ?? i.type}</td>
+      <td><span class="status"><span class="dot ${st.dot}"></span>${st.label}</span></td>
+      <td class="num">${brl(i.gross_per_share)}</td>
+      <td class="num net">${brl(i.net_per_share)}</td>
+      <td>${i.status === "with_rights"
+        ? dateBR(i.buy_by)
+        : `<span class="closed" title="a data-com (${dateBR(i.buy_by)}) já passou; comprar hoje não dá direito a este provento">janela fechada</span>`}</td>
+      <td>${payment}</td>
+      <td class="num">${pct(i.yield_on_last_price)}</td>
+      <td></td>
+    </tr>`;
+  }
+
+  function render(items, health) {
+    const byTicker = new Map();
+    for (const i of items) {
+      if (!byTicker.has(i.ticker)) byTicker.set(i.ticker, []);
+      byTicker.get(i.ticker).push(i);
+    }
+    const groups = [...byTicker.entries()].map(([ticker, events]) => {
+      const gross = events.reduce((sum, d) => sum + Number(d.gross_per_share), 0);
+      const net = events.reduce((sum, d) => sum + Number(d.net_per_share), 0);
+      const price = Number(events[0].last_price);
+      const dated = events.filter(e => !e.payment_tbd).map(e => e.payment_date).sort();
+      const byPayment = [...events].sort((a, b) =>
+        (a.payment_date ?? "9999") < (b.payment_date ?? "9999") ? -1 : 1);
+      return { ticker, events: byPayment, gross, net, price,
+               totalYield: gross / price, nextPayment: dated[0] ?? null };
+    }).sort((a, b) => b.totalYield - a.totalYield);
+    const maxYield = Math.max(...groups.map(g => g.totalYield), 1e-9);
+
+    document.getElementById("rows").innerHTML = groups.map(g => {
+      const width = Math.max(2, 100 * g.totalYield / maxYield);
+      const plural = g.events.length > 1 ? "s" : "";
+      return `<tr class="group">
+        <td class="ticker"><a href="/tickers/${g.ticker}/summary" title="resumo do papel">${g.ticker}</a></td>
+        <td class="type">${g.events.length} evento${plural}</td>
+        <td></td>
+        <td class="num">${brl(g.gross)}</td>
+        <td class="num net">${brl(g.net)}</td>
+        <td></td>
+        <td>${g.nextPayment ? "próx. " + dateBR(g.nextPayment) : '<span class="tbd">a definir</span>'}</td>
+        <td class="num"><span class="yield-cell">
+          <span class="yield-bar"><div style="width:${width}%"></div></span><strong>${pct(g.totalYield)}</strong>
+        </span></td>
+        <td class="num">${brl(g.price, 2)}</td>
+      </tr>` + g.events.map(eventRow).join("");
+    }).join("") || '<tr><td colspan="9">nenhum provento pendente na watchlist</td></tr>';
+
+    const best = groups[0];
+    const tbd = items.filter(i => i.payment_tbd).length;
+    const trades = health?.sources?.trades;
+    document.getElementById("tiles").innerHTML =
+      tile("eventos pendentes", items.length, `${groups.length} tickers com pendências`) +
+      tile("melhor yield total", best ? pct(best.totalYield) : "-",
+           best ? `${best.ticker} em ${best.events.length} evento${best.events.length > 1 ? "s" : ""}` : "") +
+      tile("sem data de pagamento", tbd, "empresa ainda não anunciou") +
+      tile("preço mais recente", trades?.age_seconds != null ? ago(trades.age_seconds) : "-",
+           "idade do último trade na cadeia");
+
+    const dot = document.getElementById("health-dot");
+    const ok = health?.status === "ok";
+    dot.className = "dot " + (ok ? "ok" : "warn");
+    document.getElementById("health-text").textContent =
+      ok ? "dados atualizados" : "dados desatualizados";
+    document.getElementById("updated").textContent =
+      "atualizado às " + new Date().toLocaleTimeString("pt-BR");
+  }
+
+  async function refresh() {
+    try {
+      const [pending, health] = await Promise.all([
+        fetch("/dividends/pending").then(r => r.json()),
+        fetch("/health").then(r => r.json()),
+      ]);
+      document.getElementById("error").style.display = "none";
+      render(pending, health);
+    } catch {
+      document.getElementById("error").style.display = "block";
+    }
+  }
+  refresh();
+  setInterval(refresh, 60_000);
+
+  // ---- Ticker detail modal ----
+  const backdrop = document.getElementById("backdrop");
+  const modal = document.getElementById("modal");
+
+  function closeModal() { backdrop.classList.remove("open"); }
+  backdrop.addEventListener("click", (e) => { if (e.target === backdrop) closeModal(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+
+  // Delegate clicks on ticker links to the modal instead of navigating.
+  document.getElementById("rows").addEventListener("click", (e) => {
+    const link = e.target.closest("a[href*='/summary']");
+    if (!link) return;
+    e.preventDefault();
+    openTicker(link.closest("tr").querySelector(".ticker").textContent.trim());
+  });
+
+  async function openTicker(ticker) {
+    modal.innerHTML = `<div class="modal-head"><h2>${ticker}</h2>
+      <button class="close" aria-label="fechar">&times;</button></div>
+      <div class="empty">carregando&hellip;</div>`;
+    backdrop.classList.add("open");
+    modal.querySelector(".close").onclick = closeModal;
+    try {
+      const s = await fetch(`/tickers/${ticker}/summary`).then(r => r.json());
+      modal.innerHTML = renderSummary(s);
+      modal.querySelector(".close").onclick = closeModal;
+    } catch {
+      modal.querySelector(".empty").textContent = "não foi possível carregar o resumo.";
+    }
+  }
+
+  // Horizontal low→high day range with open and last-price markers (pure CSS:
+  // positioned divs never distort, unlike shapes in a stretched SVG viewBox).
+  function rangeChart(sess, last) {
+    const lo = Number(sess.low), hi = Number(sess.high);
+    const span = hi - lo || 1;
+    const at = (v) => (100 * (Number(v) - lo) / span).toFixed(2);
+    const open = Number(sess.open);
+    const left = at(Math.min(open, last));
+    const width = (Math.abs(at(last) - at(open))).toFixed(2);
+    const direction = Number(last) >= open ? "up" : "down";
+    return `<div class="rangewrap">
+      <div class="track">
+        <div class="track-fill ${direction}" style="left:${left}%; width:${Math.max(width, 0.8)}%"></div>
+        <div class="track-tick" style="left:${at(open)}%"></div>
+      </div>
+      <div class="range-ends"><span>mín ${brl(lo, 2)}</span><span>máx ${brl(hi, 2)}</span></div>
+      <div class="range-ends" style="margin-top:4px">
+        <span><span class="track-tick legend-tick"></span>abertura ${brl(open, 2)}</span></div>
+    </div>`;
+  }
+
+  function renderSummary(s) {
+    const sess = s.latest_session;
+    let priceBlock = `<div class="hero"><span class="price">${brl(s.last_price, 2)}</span>`;
+    if (sess && sess.open && sess.close) {
+      const chg = (Number(sess.close) - Number(sess.open)) / Number(sess.open);
+      const up = chg >= 0;
+      priceBlock += `<span class="delta ${up ? "up" : "down"}">${up ? "▲" : "▼"} ${pct(Math.abs(chg))} no dia</span>`;
+    }
+    priceBlock += `</div><div class="range-ends"><span>pregão de ${sess ? dateBR(sess.date) : "-"}</span></div>`;
+
+    let rangeBlock = "";
+    let volumeBlock = "";
+    if (sess && sess.low && sess.high) {
+      rangeBlock = `<div class="section-label">faixa do dia</div>${rangeChart(sess, s.last_price)}`;
+      volumeBlock = `<div class="section-label">volume</div>
+        <div class="payout">
+          <div><div class="n">${Number(sess.trades).toLocaleString("pt-BR")}</div><div class="k">negócios</div></div>
+          <div><div class="n">${brl(sess.financial_volume, 0)}</div><div class="k">volume financeiro</div></div>
+        </div>`;
+    }
+
+    return `<div class="modal-head"><h2>${s.ticker}</h2>
+      <button class="close" aria-label="fechar">&times;</button></div>
+      ${priceBlock}${rangeBlock}${volumeBlock}`;
+  }
+</script>
+</body>
+</html>

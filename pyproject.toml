@@ -1,0 +1,23 @@
+[tool.uv.workspace]
+members = ["api", "ingestion"]
+
+[tool.pytest.ini_options]
+testpaths = ["api/tests", "ingestion/tests"]
+
+# Shared lint/format config for all workspace members.
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint.isort]
+known-first-party = ["api", "ingestion"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort (import ordering)
+    "UP",  # pyupgrade (modern syntax)
+    "B",   # bugbear (likely bugs)
+    "SIM", # simplify
+]
