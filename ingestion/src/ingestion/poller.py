@@ -6,6 +6,7 @@ boot and daily, and syncs corporate actions into Postgres every few hours.
 
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime, time, timedelta
 from time import sleep
 
@@ -16,7 +17,12 @@ from ingestion.corporate_actions import storage
 from ingestion.corporate_actions.sync import sync_corporate_actions
 from ingestion.logging_setup import configure_logging
 from ingestion.timezones import SAO_PAULO
-from ingestion.trades.files import REQUEST_TIMEOUT_SECONDS, TradeFileError, fetch_trade_file
+from ingestion.trades.files import (
+    REQUEST_TIMEOUT_SECONDS,
+    TradeFile,
+    TradeFileError,
+    fetch_trade_file,
+)
 from ingestion.trades.models import parse_trades
 from ingestion.trades.publisher import create_producer, publish_dead_letters, publish_trades
 from ingestion.trades.watermarks import (
@@ -38,6 +44,8 @@ WINDOW_END = time(18, 35)
 BACKFILL_CALENDAR_DAYS = 28
 # Corporate actions change a few times a day at most; announcements can land any time.
 CA_SYNC_INTERVAL_SECONDS = int(os.environ.get("CA_SYNC_INTERVAL_SECONDS", str(6 * 3600)))
+# Concurrent downloads per cycle.
+FETCH_CONCURRENCY = int(os.environ.get("FETCH_CONCURRENCY", "5"))
 
 
 def in_polling_window(now: datetime) -> bool:
@@ -52,13 +60,25 @@ def poll_watchlist(
     session_date: date,
     source: str,
 ) -> None:
-    """Fetch every watched ticker once, publishing only trades above the watermark."""
-    for tracked in WATCHLIST:
+    """Fetch every watched ticker once, publishing only trades above the watermark.
+
+    Downloads run concurrently (network-bound); parsing, publishing and watermark
+    updates stay sequential in watchlist order, so delivery semantics are unchanged.
+    """
+
+    def try_fetch(tracked) -> TradeFile | TradeFileError:
         try:
-            trade_file = fetch_trade_file(tracked.ticker, session_date, client)
+            return fetch_trade_file(tracked.ticker, session_date, client)
         except TradeFileError as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=FETCH_CONCURRENCY) as pool:
+        results = list(pool.map(try_fetch, WATCHLIST))
+
+    for tracked, trade_file in zip(WATCHLIST, results, strict=True):
+        if isinstance(trade_file, TradeFileError):
             # One ticker failing must never take the polling loop down.
-            logger.warning("fetch failed ticker=%s reason=%s", tracked.ticker, exc)
+            logger.warning("fetch failed ticker=%s reason=%s", tracked.ticker, trade_file)
             continue
         trades, malformed = parse_trades(trade_file.lines)
         if malformed:

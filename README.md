@@ -35,8 +35,12 @@ stream are the product.
 Requires Docker with Compose v2.
 
 ```bash
-docker compose up -d --build
+./start.sh
 ```
+
+The script brings the stack up and follows the initial trade backfill (one line per
+session, a few minutes on a fresh environment), exiting when the data is ready. Plain
+`docker compose up -d --build` works too if you prefer to skip the progress view.
 
 Then open <http://localhost:8000/docs> (or the example dashboard at
 <http://localhost:8000>).
